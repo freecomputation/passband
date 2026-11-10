@@ -21,6 +21,11 @@ log records the refusal. With no edition shelved, the decoder runs
 from the system PATH and its events are stamped "system" - the record
 says which world each event came from.
 
+A decoder whose child dies the moment it starts - a bad config, a
+busy tuner, a build missing its backend - is granted once, then
+backed off for the rest of the run: its blocks are skipped like an
+unavailable decoder's instead of being re-granted every second.
+
 The loop is stoppable, and it is built to be tested: the clock and
 the runner factory are injectable, and no child process is left
 running when a grant ends.
@@ -42,6 +47,12 @@ from .passes import ACCURACY_NOTE, find_passes, parse_tles
 
 PASS_FREQ_HZ = 137_620_000
 PASS_LEAD_SECONDS = 90
+
+# A grant whose runner reports it never ran, with no events, inside
+# this many seconds of starting is a child that died at startup.
+# Real dwells are minutes long; nothing healthy ends this fast with
+# nothing heard.
+STARTUP_DEATH_SECONDS = 10.0
 
 
 def _freq_text(freq_hz) -> str:
@@ -249,6 +260,7 @@ class Scheduler:
         self.stop_event = threading.Event()
         self.grants_path = self.data_dir / "grants.jsonl"
         self._last_block_key: str | None = None
+        self._backed_off: set = set()
         self.summary = {"grants": 0, "events": 0, "refused": 0, "pass_overrides": 0,
                         "unavailable": 0}
         self._skipped_unavailable: list = []
@@ -295,6 +307,8 @@ class Scheduler:
         """
         if self.simulate:
             return True
+        if block.decoder in self._backed_off:
+            return False
         try:
             runner = self.runner_factory(block.decoder)
             available = getattr(runner, "available", None)
@@ -425,11 +439,26 @@ class Scheduler:
                 stop.wait(0.1)
 
         threading.Thread(target=watch_stop, daemon=True).start()
+        result = None
+        started = time.monotonic()
         try:
-            runner.run(ctx, self._emit, stop, duration=duration)
+            result = runner.run(ctx, self._emit, stop, duration=duration)
         finally:
             stop.set()
         self.summary["grants"] += 1
+        if (
+            isinstance(result, dict)
+            and result.get("ran") is False
+            and not result.get("events")
+            and time.monotonic() - started < STARTUP_DEATH_SECONDS
+        ):
+            # The child died at startup. Granting it again would spin
+            # the same failure every second for the whole run, so the
+            # decoder is backed off: from here on its blocks are
+            # skipped like an unavailable decoder's.
+            self._backed_off.add(block.decoder)
+            self._say(f"backoff - {block.decoder} died at startup; "
+                      "skipping it for the rest of this run")
         self._last_block_key = f"{block.decoder}@{block.freq_hz}"
 
     # -- the loop -----------------------------------------------------------

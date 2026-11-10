@@ -264,6 +264,71 @@ def test_all_unavailable_grants_nothing_and_sleeps(store, data_dir):
     assert all("unavailable" in entry for entry in logged)
 
 
+class DyingRunner(FakeRunner):
+    """Its binary answers the availability check, then the child dies
+    the moment it is granted - a bad config, a busy tuner, a build
+    missing its backend. It must be granted once and then backed
+    off, never spun."""
+
+    def run(self, ctx, emit, stop_event, duration=None):
+        self.calls.append((self.name, duration))
+        return {"runner": self.name, "ran": False,
+                "reason": "child exited at startup", "events": 0}
+
+
+def make_dying_scheduler(store, data_dir, clock, calls, dying_names, **kwargs):
+    def factory(name):
+        if name in dying_names:
+            return DyingRunner(name, calls)
+        return FakeRunner(name, calls)
+
+    return Scheduler(
+        store,
+        data_dir,
+        clock=clock,
+        sleeper=clock.advance,
+        runner_factory=factory,
+        **kwargs,
+    )
+
+
+def plan_dying_and_healthy():
+    return Plan.from_dict(
+        {
+            "name": "dying",
+            "blocks": [
+                {"decoder": "airband", "freq_hz": 121200000, "dwell_seconds": 60,
+                 "priority": 10},
+                {"decoder": "rtl_433", "freq_hz": 433920000, "dwell_seconds": 60,
+                 "priority": 5},
+            ],
+        }
+    )
+
+
+def test_startup_death_is_backed_off_not_regranted(store, data_dir):
+    clock = FakeClock()
+    calls = []
+    lines = []
+    scheduler = make_dying_scheduler(
+        store, data_dir, clock, calls, {"airband"}, announce=lines.append
+    )
+    summary = scheduler.run(plan_dying_and_healthy(), max_grants=3)
+    # the dying decoder ran exactly once; the healthy one took over
+    assert [name for name, _ in calls] == ["airband", "rtl_433", "rtl_433"]
+    assert summary["grants"] == 3
+    assert summary["unavailable"] == 2
+    logged = grants(data_dir)
+    airband_grants = [e for e in logged
+                      if e["decoder"] == "airband" and "unavailable" not in e]
+    assert len(airband_grants) == 1
+    airband_skips = [e for e in logged
+                     if e["decoder"] == "airband" and "unavailable" in e]
+    assert len(airband_skips) == 2
+    assert any(line.startswith("backoff - airband") for line in lines)
+    assert any(line.startswith("skip - airband") for line in lines)
+
+
 def test_live_output_announces_grants_skips_and_events(store, data_dir):
     clock = FakeClock()
     calls = []
