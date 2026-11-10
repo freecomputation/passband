@@ -1,0 +1,3 @@
+{"device": "AIS-catcher", "channel": "A", "mmsi": 366999999, "type": 1, "speed": 8.4, "course": 171.2, "heading": 172, "lat": 29.301, "lon": -89.402, "status": 0, "rssi": -88}
+{"device": "AIS-catcher", "channel": "B", "mmsi": 367123456, "type": 5, "shipname": "EXAMPLE TRADER", "callsign": "WDA0000", "destination": "MOBILE", "imo": 9000000}
+{"device": "AIS-catcher", "channel": "A", "mmsi": 366999999, "type": 1, "speed": 8.5, "course": 171.8, "heading": 172, "lat": 29.295, "lon": -89.398, "status": 0, "rssi": -87}

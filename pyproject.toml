@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "passband"
+version = "0.1.0"
+description = "Passband - a receive-only, offline-first SDR listening system for one RTL-SDR (Free Computation)."
+readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
+requires-python = ">=3.10"
+dependencies = []
+authors = [{ name = "Free Computation" }]
+
+[project.scripts]
+passband = "passband.cli:main"
+
+[tool.setuptools]
+packages = ["passband"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

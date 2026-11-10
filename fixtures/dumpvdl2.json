@@ -1,0 +1,44 @@
+{
+    "vdl2": {
+        "t": {
+            "sec": 1762709000,
+            "usec": 123000
+        },
+        "freq": 136975000,
+        "idx": 0,
+        "src": {
+            "addr": 10515458,
+            "type": "Aircraft"
+        },
+        "dst": {
+            "addr": 1119511,
+            "type": "Ground station"
+        },
+        "avlc": {
+            "cr": "Command",
+            "frame_type": "I"
+        }
+    }
+}
+{
+    "vdl2": {
+        "t": {
+            "sec": 1762709060,
+            "usec": 45000
+        },
+        "freq": 136975000,
+        "idx": 1,
+        "src": {
+            "addr": 10506321,
+            "type": "Aircraft"
+        },
+        "dst": {
+            "addr": 1119511,
+            "type": "Ground station"
+        },
+        "avlc": {
+            "cr": "Response",
+            "frame_type": "RR"
+        }
+    }
+}

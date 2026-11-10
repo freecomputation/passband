@@ -1,0 +1,3 @@
+{"time": "2026-11-09 08:15:02", "model": "Acurite-5n1", "id": 1234, "channel": "A", "temp_C": 21.4, "humidity": 46, "wind_avg_km_h": 6.2, "rssi": -62.1, "snr": 18.4}
+{"time": "2026-11-09 08:15:20", "model": "Schrader-EG53", "id": 98765, "tpms_pressure_kpa": 231, "tpms_temp_C": 18, "rssi": -71.5, "snr": 11.2}
+{"time": "2026-11-09 08:16:01", "model": "Fineoffset-WH1080", "id": 77, "temp_C": 20.9, "humidity": 48, "rssi": -80.0, "snr": 8.9}

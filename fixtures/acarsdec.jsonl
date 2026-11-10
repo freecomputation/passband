@@ -1,0 +1,2 @@
+{"timestamp": 1762709100.0, "freq": "131.550", "level": -18.2, "mode": "2", "label": "Q0", "tail": "N12345", "flight": "DL123", "from": "KATL", "to": "KMGM", "text": "REQUESTING DESCENT"}
+{"timestamp": 1762709200.0, "freq": "131.550", "level": -21.7, "mode": "2", "label": "H1", "tail": "N67890", "flight": "UA987", "text": "ETA 2145 FUEL 12.3"}
