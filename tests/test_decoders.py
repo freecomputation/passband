@@ -293,7 +293,7 @@ def test_airband_squelch_threshold_written_and_overridable(tmp_path):
     runner = AirbandRunner()
     ctx = _airband_ctx(tmp_path, 121_200_000)
     text = runner.config_text(ctx, runner.channels_for(ctx), tmp_path)
-    assert "squelch_snr_threshold = 3.0;" in text
+    assert "squelch_snr_threshold = 5.0;" in text
     ctx.airband_squelch_snr = 6.5
     text = runner.config_text(ctx, runner.channels_for(ctx), tmp_path)
     assert "squelch_snr_threshold = 6.5;" in text

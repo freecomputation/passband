@@ -956,15 +956,21 @@ class AirbandRunner(Runner):
     streams measurably sounded worse than the same audio in the
     recorded clips).
 
-    The squelch is an SNR threshold. rtl_airband's built-in default
-    is strict enough to stay shut on a weak-signal indoor station,
-    so the runner writes 3.0 dB unless "airband_squelch_snr" in
-    config says otherwise - low enough for a real carrier to open
-    it, high enough that plain noise mostly does not.
+    The squelch is an SNR threshold, written as 5.0 dB unless
+    "airband_squelch_snr" in config says otherwise. Measured on a
+    weak-signal indoor station: at 3.0 dB the noise floor alone
+    holds every channel in a slice open at once, and the recorded
+    clips are constant-level noise with no speech dynamics; at
+    5.0 dB the squelch stays shut on noise and opens on real
+    carriers, and the ATIS broadcasts record as chopped but
+    plainly speech-modulated audio. Gain defaults to 35 for the
+    same reason: at 45 the front end overloads near strong FM
+    broadcast signals and raises the apparent noise floor across
+    the whole slice.
     """
 
-    squelch_snr_default = 3.0
-    gain_default = 45
+    squelch_snr_default = 5.0
+    gain_default = 35
 
     name = "airband"
     binary = "rtl_airband"
