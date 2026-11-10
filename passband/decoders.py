@@ -1029,7 +1029,7 @@ class AirbandRunner(Runner):
         squelch = (ctx.airband_squelch_snr
                    if ctx.airband_squelch_snr is not None
                    else self.squelch_snr_default)
-        for channel in channels:
+        for index, channel in enumerate(channels):
             freq_hz = int(channel["freq_hz"])
             lines += [
                 "    {",
@@ -1051,7 +1051,11 @@ class AirbandRunner(Runner):
                     '          name = "live";',
                     "        }",
                 ]
-            lines += ["      );", "    },"] 
+            # No trailing comma after the last channel: strict
+            # libconfig parsers reject a list that ends in one,
+            # even though lenient builds accept it.
+            lines += ["      );",
+                      "    }," if index < len(channels) - 1 else "    }"]
         lines += ["  );", " }", ");", ""]
         return "\n".join(lines)
 
