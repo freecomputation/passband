@@ -299,6 +299,18 @@ def test_airband_squelch_threshold_written_and_overridable(tmp_path):
     assert "squelch_snr_threshold = 6.5;" in text
 
 
+def test_airband_config_has_no_trailing_comma_after_last_channel(tmp_path):
+    # Strict libconfig parsers (the Ubuntu build) refuse a channel
+    # list that ends in a comma; lenient ones (the Fedora build)
+    # accept it, which hid the bug until the config met the strict
+    # parser and rtl_airband died on a syntax error.
+    runner = AirbandRunner()
+    ctx = _airband_ctx(tmp_path, 121_200_000)
+    text = runner.config_text(ctx, runner.channels_for(ctx), tmp_path)
+    assert "    }\n  );" in text
+    assert "    },\n  );" not in text
+
+
 def test_airband_clip_event_time_is_the_filename_in_utc(tmp_path):
     runner = AirbandRunner()
     ctx = _airband_ctx(tmp_path, 121_200_000)
