@@ -42,6 +42,7 @@ from pathlib import Path
 
 from . import decoders as decoders_module
 from . import editions
+from . import tuner as tuner_module
 from .events import iso_at
 from .passes import ACCURACY_NOTE, find_passes, parse_tles
 
@@ -466,6 +467,19 @@ class Scheduler:
     def run(self, plan: Plan, once: bool = False,
             max_grants: int | None = None) -> dict:
         """Run the plan until stopped (or once, or max_grants grants)."""
+        if not self.simulate:
+            # A tuner holder this run did not start - an orphan from
+            # a run that died hard, or the owner's own other session.
+            # Name it and leave it alone: Passband never kills a
+            # process it did not spawn. Grants that need the tuner
+            # will fail against it, and the startup-death backoff
+            # keeps that from spinning.
+            for holder in tuner_module.tuner_holders():
+                self._say(
+                    f"tuner held - pid {holder['pid']}: "
+                    f"{holder['command']} - not started by this run; "
+                    "leaving it alone"
+                )
         grants_done = 0
         while not self.stop_event.is_set():
             now = self.clock()

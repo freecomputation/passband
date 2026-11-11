@@ -14,6 +14,14 @@ without emitting, and nothing anywhere crashes because a decoder is
 missing. A missing decoder is a fact about the machine, not an error
 in Passband.
 
+Supervision is paranoid on purpose, because the tuner is one device
+and an orphan holds it hostage. Every child is spawned in its own
+process group; every read a runner waits on sits behind a deadline;
+and stopping a runner signals the whole group - TERM, then KILL -
+so nothing a decoder spawned can outlive its grant. A run reports
+at startup any tuner-holding process it did not start (see
+tuner.tuner_holders) and never kills one.
+
 When the tuner is simulated, runners replay their recorded fixture
 (fixtures/ directory) through the very same parsers, restamped to the
 present, so the whole stack can be seen working with no hardware and
@@ -31,6 +39,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -148,7 +157,8 @@ class Runner:
     def _spawn(self, ctx: RunnerContext) -> list[subprocess.Popen]:
         argv = self.build_argv(ctx)
         proc = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+            argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, start_new_session=True
         )
         return [proc]
 
@@ -157,6 +167,24 @@ class Runner:
         try:
             for line in stream:
                 sink.put(line)
+        except (ValueError, OSError):
+            pass
+        sink.put(None)
+
+    @staticmethod
+    def _pump_chunks(stream, sink: "queue.Queue", size: int) -> None:
+        """Move fixed-size byte chunks from a pipe to a queue.
+
+        Lets a run loop wait on audio with a timeout instead of
+        sitting in a blocking read on a pipe whose writer may have
+        hung - a read with no deadline is a grant that never ends.
+        """
+        try:
+            while True:
+                chunk = stream.read(size)
+                if not chunk:
+                    break
+                sink.put(chunk)
         except (ValueError, OSError):
             pass
         sink.put(None)
@@ -219,16 +247,48 @@ class Runner:
             stop_event.wait(0.05)
 
     @staticmethod
+    def _signal_group(proc: subprocess.Popen, sig: int) -> None:
+        """Signal a child's whole process group, never just the child.
+
+        Every Passband child is spawned with start_new_session=True,
+        so the child leads its own group (pgid == pid) and anything
+        it spawned - a pipeline partner's children, a decoder's own
+        helpers - hears the signal too. Signalling only the child is
+        how an orphaned grandchild keeps the tuner after its parent
+        is gone. The guard refuses to signal our own group if a
+        process was somehow not spawned in a session of its own.
+        """
+        try:
+            if proc.pid != os.getpgrp():
+                os.killpg(proc.pid, sig)
+                return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        try:
+            proc.send_signal(sig)
+        except (ProcessLookupError, OSError):
+            pass
+
+    @staticmethod
     def _stop_all(procs: list[subprocess.Popen]) -> None:
+        """End every child and its whole group: TERM, wait, KILL, wait.
+
+        Bounded at both stages - a child that ignores TERM gets KILL,
+        and a child that somehow survives KILL is left reported by
+        the wait timing out, never waited on forever.
+        """
         for proc in procs:
             if proc.poll() is None:
-                proc.terminate()
+                Runner._signal_group(proc, signal.SIGTERM)
         for proc in procs:
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
+                Runner._signal_group(proc, signal.SIGKILL)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
 
 
 # ----------------------------------------------------------------------
@@ -339,7 +399,8 @@ class ReadsbRunner(Runner):
             "--write-json-every", "1",
         ]
         proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL)
+                                stderr=subprocess.DEVNULL,
+                                start_new_session=True)
         json_file = json_dir / "aircraft.json"
         deadline = time.monotonic() + duration if duration else None
         last_mtime = 0.0
@@ -695,11 +756,13 @@ class MultimonRunner(Runner):
         rtl_fm = subprocess.Popen(
             ["rtl_fm", "-f", str(self.freq(ctx)), "-s", "22050", "-g", "40", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
         multimon = subprocess.Popen(
             self.build_argv(ctx),
             stdin=rtl_fm.stdout, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True,
+            start_new_session=True,
         )
         rtl_fm.stdout.close()
         return [multimon, rtl_fm]
@@ -813,8 +876,17 @@ class WxRadioRunner(Runner):
             ["rtl_fm", "-f", str(self.freq(ctx)), "-s", "200000",
              "-r", "48000", "-g", "40", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
         procs = [rtl_fm]
+        # Audio arrives through a pump thread and a queue, so the
+        # loop below waits with a timeout and keeps its deadline and
+        # its stop event. A bare blocking read on this pipe would sit
+        # forever if rtl_fm hung holding the tuner.
+        chunks: "queue.Queue" = queue.Queue()
+        threading.Thread(target=self._pump_chunks,
+                         args=(rtl_fm.stdout, chunks, 48000 * 2),
+                         daemon=True).start()
         multimon = None
         lines: "queue.Queue" = queue.Queue()
         if shutil.which("multimon-ng") is not None:
@@ -822,6 +894,7 @@ class WxRadioRunner(Runner):
                 ["multimon-ng", "-a", "EAS", "-t", "raw", "-"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
             procs.append(multimon)
             threading.Thread(target=self._pump, args=(multimon.stdout, lines),
@@ -835,8 +908,13 @@ class WxRadioRunner(Runner):
             while not stop_event.is_set():
                 if deadline is not None and time.monotonic() >= deadline:
                     break
-                chunk = rtl_fm.stdout.read(48000 * 2)  # one second of int16 audio
-                if not chunk:
+                try:
+                    chunk = chunks.get(timeout=0.2)
+                except queue.Empty:
+                    if rtl_fm.poll() is not None:
+                        break
+                    continue
+                if chunk is None:
                     break
                 if multimon is not None:
                     try:
@@ -1145,7 +1223,8 @@ class AirbandRunner(Runner):
         )
         argv = [self.binary, "-F", "-e", "-c", str(config_path)]
         proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL)
+                                stderr=subprocess.DEVNULL,
+                                start_new_session=True)
         started = time.monotonic()
         deadline = started + duration if duration else None
         emitted: set[str] = set()
@@ -1291,7 +1370,8 @@ class SatDumpRunner(Runner):
         out_dir.mkdir(parents=True, exist_ok=True)
         started = time.time()
         proc = subprocess.Popen(self.build_argv(ctx), stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL)
+                                stderr=subprocess.DEVNULL,
+                                start_new_session=True)
         try:
             self._wait(stop_event, duration)
         finally:

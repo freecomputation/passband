@@ -23,6 +23,7 @@ fixtures when the tuner is simulated.
 from __future__ import annotations
 
 import ctypes.util
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -34,14 +35,18 @@ def _run_capture_text(argv: list[str], timeout: float) -> str:
     """Run a tool briefly and return whatever it printed (both streams)."""
     try:
         proc = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True
         )
     except OSError:
         return ""
     try:
         out, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        try:
+            os.killpg(proc.pid, 9)
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.kill()
         try:
             out, _ = proc.communicate(timeout=5)
         except subprocess.TimeoutExpired:
@@ -138,6 +143,54 @@ def driver_status() -> dict:
         "blog_fork": blog_evidence or "unverified",
         "note": "the V4 needs the RTL-SDR Blog drivers for correct upconverter/triplexer switching",
     }
+
+
+# The programs that can hold the tuner: the rtl-sdr tools and every
+# decoder Passband supervises. A process running one of these owns
+# the dongle (or a pipeline fed by it) for as long as it lives.
+HOLDER_BINARIES = frozenset({
+    "rtl_sdr", "rtl_fm", "rtl_tcp", "rtl_airband",
+    "readsb", "dumpvdl2", "acarsdec", "ais-catcher", "satdump",
+    "multimon-ng",
+})
+
+
+def tuner_holders(proc_root="/proc", own_pid: int | None = None) -> list[dict]:
+    """Who else is holding the tuner right now. Reports, never acts.
+
+    Scans /proc command lines for the tuner-holding programs above.
+    This process is excluded; anything this run later spawns cannot
+    appear, because callers scan before the first grant. A holder is
+    usually a decoder orphaned by an earlier run that died without
+    stopping its children, or the owner's own separate session - the
+    report names it and Passband leaves it entirely alone. Returns a
+    list of {"pid": int, "command": str}, sorted by pid.
+    """
+    own = os.getpid() if own_pid is None else own_pid
+    root = Path(proc_root)
+    holders = []
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return holders
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        if pid == own:
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        argv = [part.decode("utf-8", errors="replace")
+                for part in raw.split(b"\0") if part]
+        if not argv:
+            continue
+        if Path(argv[0]).name in HOLDER_BINARIES:
+            holders.append({"pid": pid, "command": " ".join(argv)[:200]})
+    holders.sort(key=lambda holder: holder["pid"])
+    return holders
 
 
 class RtlSdrTuner:
