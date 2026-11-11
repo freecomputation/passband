@@ -25,7 +25,7 @@ from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
-from . import editions
+from . import editions, triage
 from .passes import ACCURACY_NOTE, find_passes, parse_tles
 from .registry import build_registry, missing_regulars
 
@@ -80,6 +80,52 @@ def _tle_source(config: dict, data_dir):
     if not text:
         return None, None, None
     return parse_tles(text), edition_date, label
+
+
+def _triage_for_day(data_dir, day: str, day_events: list) -> dict | None:
+    """Clip triage results for one day, from <data_dir>/triage.jsonl.
+
+    The latest verdict per clip wins. A clip belongs to the day its
+    transmission started (recorded in UTC in the clip's name), and
+    voice clips are named with the label and frequency of the day's
+    matching voice event when there is one. Returns None when no
+    clip starting that day has ever been judged.
+    """
+    latest: dict[str, dict] = {}
+    for record in triage.load_records(data_dir):
+        if record.get("verdict") in ("voice", "static", "untriaged"):
+            latest[record["clip"]] = record
+    if not latest:
+        return None
+    by_clip = {}
+    for event in day_events:
+        payload = event.get("payload") or {}
+        if payload.get("clip"):
+            by_clip[payload["clip"]] = event
+    counts = {"voice": 0, "static": 0, "untriaged": 0}
+    voice_clips = []
+    judged_that_day = 0
+    for clip, record in latest.items():
+        started = record.get("started_utc") or record.get("ts") or ""
+        if started[:10] != day:
+            continue
+        judged_that_day += 1
+        counts[record["verdict"]] += 1
+        if record["verdict"] == "voice":
+            event = by_clip.get(clip, {})
+            payload = event.get("payload") or {}
+            voice_clips.append({
+                "clip": clip,
+                "started_utc": record.get("started_utc"),
+                "label": payload.get("label"),
+                "freq_hz": event.get("freq_hz"),
+                "transcript": (record.get("whisper") or {}).get(
+                    "transcript", ""),
+            })
+    if not judged_that_day:
+        return None
+    voice_clips.sort(key=lambda item: item["started_utc"] or "")
+    return {"counts": counts, "voice_clips": voice_clips}
 
 
 def build_report(store, data_dir, day: str, config: dict | None = None) -> dict:
@@ -175,6 +221,7 @@ def build_report(store, data_dir, day: str, config: dict | None = None) -> dict:
         "went_dark": went_dark,
         "passes": passes_info,
         "warnings": warnings,
+        "triage": _triage_for_day(data_dir, day, day_events),
     }
 
 
@@ -217,6 +264,21 @@ def render_text(report: dict) -> str:
             )
     else:
         lines.append("  none")
+    if report.get("triage"):
+        info = report["triage"]
+        counts = info["counts"]
+        lines.append("")
+        lines.append("Airband clip triage:")
+        lines.append(f"  voice: {counts['voice']}  static: {counts['static']}  "
+                     f"untriaged: {counts['untriaged']}")
+        for item in info["voice_clips"]:
+            label = item["label"] or "airband"
+            freq = (f"{item['freq_hz'] / 1e6:.3f} MHz"
+                    if item.get("freq_hz") else "unknown frequency")
+            lines.append(f"  voice clip: {label} ({freq}) "
+                         f"{item['started_utc'] or ''}")
+            if item["transcript"]:
+                lines.append(f"    heard as: {item['transcript'][:100]}")
     lines.append("")
     lines.append("Satellite passes:")
     if report["passes"]:
@@ -291,6 +353,27 @@ def render_html(report: dict) -> str:
         parts.append("</ul>")
     else:
         parts.append("<p>none</p>")
+    if report.get("triage"):
+        info = report["triage"]
+        counts = info["counts"]
+        parts.append("<h2>Airband clip triage</h2>")
+        parts.append(
+            f"<p>Voice: {counts['voice']} &middot; static: "
+            f"{counts['static']} &middot; untriaged: "
+            f"{counts['untriaged']}</p>")
+        if info["voice_clips"]:
+            parts.append("<ul>")
+            for item in info["voice_clips"]:
+                label = esc(str(item["label"] or "airband"))
+                freq = (f"{item['freq_hz'] / 1e6:.3f} MHz"
+                        if item.get("freq_hz") else "unknown frequency")
+                parts.append(
+                    f"<li>{label} ({esc(freq)}), "
+                    f"{esc(str(item['started_utc'] or ''))}"
+                    + (f" - heard as: {esc(item['transcript'][:100])}"
+                       if item["transcript"] else "")
+                    + "</li>")
+            parts.append("</ul>")
     parts.append("<h2>Satellite passes</h2>")
     if report["passes"]:
         info = report["passes"]

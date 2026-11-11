@@ -11,12 +11,14 @@
     passband report [--date YYYY-MM-DD] [--html PATH]
     passband edition shelve|verify|list
     passband compost
+    passband triage [--compost] [--days N] [--limit N]
 
 Everything runs locally against a data directory (default
 ~/.local/share/passband, override with --data-dir). Ground location and
 tuning for passes/snippets live in <data_dir>/config.json:
 {"lat": 45.0, "lon": -100.0, "alt_m": 500, "tle_file": null,
- "retention_days": 7, "cap_gib": 2, "hf_watch_dir": null}.
+ "retention_days": 7, "cap_gib": 2, "hf_watch_dir": null,
+ "triage_model": "small", "triage_retention_days": 7}.
 
 --simulate runs the whole stack on a simulated tuner: decoders replay
 their recorded fixtures through the real parsers, events land in the
@@ -33,7 +35,7 @@ import threading
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from . import __version__, decoders as decoders_module, editions, snippets
+from . import __version__, decoders as decoders_module, editions, snippets, triage
 from .events import iso_at
 from .passes import ACCURACY_NOTE, find_passes, parse_tles
 from .registry import build_registry
@@ -219,6 +221,26 @@ def cmd_compost(args) -> int:
         print("nothing to compost")
     for action in actions:
         print(f"composted {action['file']} ({action['bytes']} bytes): {action['reason']}")
+    return 0
+
+
+def cmd_triage(args) -> int:
+    config = load_config(args.data_dir)
+    summary = triage.triage_data_dir(
+        args.data_dir, config, limit=args.limit, force=args.force)
+    print(f"triage: {summary['voice']} voice, {summary['static']} static, "
+          f"{summary['untriaged']} untriaged, {summary['skipped']} "
+          f"already judged")
+    if summary.get("blocked"):
+        print(f"triage blocked: {summary['blocked']}", file=sys.stderr)
+        return 2
+    if args.compost:
+        days = (args.days if args.days is not None
+                else int(config.get("triage_retention_days",
+                                    triage.DEFAULT_RETENTION_DAYS)))
+        actions = triage.compost_static(args.data_dir, days)
+        if not actions:
+            print("no static clips past the retention age")
     return 0
 
 
@@ -419,6 +441,20 @@ def build_parser() -> argparse.ArgumentParser:
     compost_parser = sub.add_parser("compost", help="compost old snippets")
     compost_parser.add_argument("--days", type=int)
     compost_parser.add_argument("--cap-gib", type=float)
+
+    triage_parser = sub.add_parser(
+        "triage", help="judge airband clips: voice, static, or untriaged")
+    triage_parser.add_argument("--limit", type=int,
+                               help="judge at most this many new clips")
+    triage_parser.add_argument("--force", action="store_true",
+                               help="re-judge clips already on record")
+    triage_parser.add_argument("--compost", action="store_true",
+                               help="also compost static clips past the "
+                                    "retention age")
+    triage_parser.add_argument("--days", type=int,
+                               help="retention age in days for --compost "
+                                    "(default: config triage_retention_days "
+                                    "or 7)")
     return parser
 
 
@@ -434,6 +470,7 @@ _COMMANDS = {
     "report": cmd_report,
     "edition": cmd_edition,
     "compost": cmd_compost,
+    "triage": cmd_triage,
 }
 
 
