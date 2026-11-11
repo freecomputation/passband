@@ -92,6 +92,8 @@ EOF
 passband run --plan weekday     # Ctrl-C stops; nothing is left running
 passband listen rtl_433 --seconds 300
 passband capture --freq 137620000 --seconds 10   # a SigMF snippet, as evidence
+passband triage                 # judge the airband clips: voice or static
+passband triage --compost       # and compost the old static ones
 ```
 
 ## How it works
@@ -136,6 +138,17 @@ passband capture --freq 137620000 --seconds 10   # a SigMF snippet, as evidence
   composted after **7 days** or beyond a **2 GiB** cap, oldest first,
   every compost logged. Both bounds are configurable in config.json
   (`retention_days`, `cap_gib`) or per-run (`passband compost --days N`).
+- **Clip triage** (`passband/triage.py`) - `passband triage` judges
+  each airband clip voice, static, or untriaged, and records the
+  verdict, the measured acoustic features, and - for voice - the
+  transcript in `triage.jsonl`. The hearing is transcription by the
+  optional faster-whisper stack (a local model; ffmpeg decodes the
+  clips); without it every clip is untriaged, never guessed, and no
+  initial prompt is ever passed to the model. The daily report
+  carries the counts and names the day's voice clips.
+  `passband triage --compost` deletes static-judged clips older
+  than the retention age (config `triage_retention_days`, default
+  7 days); voice and untriaged clips are never composted.
 
 ## Data layout
 
@@ -145,6 +158,7 @@ passband capture --freq 137620000 --seconds 10   # a SigMF snippet, as evidence
   events/YYYY-MM-DD.jsonl       the truth
   index.sqlite3                 derived; delete freely
   grants.jsonl                  every tuner grant, with its reason
+  triage.jsonl                  clip verdicts, evidence, compost record
   snippets/*.sigmf-data/.meta   evidence, composted
   editions/<name>@<version>/    sealed capability + manifest.json
   receipts/<name>@<version>.json
@@ -181,9 +195,10 @@ passband capture --freq 137620000 --seconds 10   # a SigMF snippet, as evidence
 python3 -m pytest
 ```
 
-74 tests: the event contract, the store and its index rebuild, the
+96 tests: the event contract, the store and its index rebuild, the
 registry and its absent-regulars, every decoder parser against the
 recorded fixtures in `fixtures/`, scheduler rotation and pass
 preemption on a fake clock, the editions gate including tamper
-refusal, snippet composting, pass sanity, and CLI smoke - all with
-no network, no dongle, and no decoder binaries installed.
+refusal, snippet composting, pass sanity, clip triage verdicts and
+compost rules, and CLI smoke - all with no network, no dongle, and
+no decoder binaries installed.
