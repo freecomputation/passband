@@ -195,10 +195,11 @@ passband triage --compost       # and compost the old static ones
 python3 -m pytest
 ```
 
-96 tests: the event contract, the store and its index rebuild, the
+102 tests: the event contract, the store and its index rebuild, the
 registry and its absent-regulars, every decoder parser against the
 recorded fixtures in `fixtures/`, scheduler rotation and pass
 preemption on a fake clock, the editions gate including tamper
 refusal, snippet composting, pass sanity, clip triage verdicts and
-compost rules, and CLI smoke - all with no network, no dongle, and
-no decoder binaries installed.
+compost rules, tuner hardening (process groups, bounded waits,
+stale-holder reports), and CLI smoke - all with no network, no
+dongle, and no decoder binaries installed.
